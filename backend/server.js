@@ -19,6 +19,7 @@ const PORT = process.env.PORT || 3001;
 
 // Keep track of room states if needed, but for now we just rely on rooms
 const rooms = new Set();
+const roomData = new Map(); // roomId -> { boxes: {} }
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
@@ -27,10 +28,18 @@ io.on('connection', (socket) => {
   socket.on('join-room', ({ roomId }) => {
     socket.join(roomId);
     rooms.add(roomId);
+    
+    if (!roomData.has(roomId)) {
+      roomData.set(roomId, { boxes: {} });
+    }
+
     console.log(`User ${socket.id} joined room ${roomId}`);
     
     // Tell the user they successfully joined
     socket.emit('room-joined', { roomId, userId: socket.id });
+    
+    // Send existing boxes to the user
+    socket.emit('init-boxes', roomData.get(roomId).boxes);
     
     // Notify others in the room
     socket.to(roomId).emit('user-joined', { userId: socket.id });
@@ -45,6 +54,22 @@ io.on('connection', (socket) => {
   // Handle drawing events
   socket.on('draw', ({ roomId, drawData }) => {
     socket.to(roomId).emit('draw-update', drawData);
+  });
+
+  // Handle box events
+  socket.on('add-box', ({ roomId, box }) => {
+    if (roomData.has(roomId)) {
+      roomData.get(roomId).boxes[box.id] = box;
+    }
+    socket.to(roomId).emit('box-added', box);
+  });
+
+  socket.on('box-move', ({ roomId, boxId, x, y }) => {
+    if (roomData.has(roomId) && roomData.get(roomId).boxes[boxId]) {
+      roomData.get(roomId).boxes[boxId].x = x;
+      roomData.get(roomId).boxes[boxId].y = y;
+    }
+    socket.to(roomId).emit('box-moved', { boxId, x, y });
   });
 
   // Handle disconnection
