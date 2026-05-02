@@ -30,7 +30,7 @@ io.on('connection', (socket) => {
     rooms.add(roomId);
     
     if (!roomData.has(roomId)) {
-      roomData.set(roomId, { boxes: {} });
+      roomData.set(roomId, { boxes: {}, connections: [] });
     }
 
     console.log(`User ${socket.id} joined room ${roomId}`);
@@ -38,8 +38,9 @@ io.on('connection', (socket) => {
     // Tell the user they successfully joined
     socket.emit('room-joined', { roomId, userId: socket.id });
     
-    // Send existing boxes to the user
+    // Send existing boxes and connections to the user
     socket.emit('init-boxes', roomData.get(roomId).boxes);
+    socket.emit('init-connections', roomData.get(roomId).connections);
     
     // Notify others in the room
     socket.to(roomId).emit('user-joined', { userId: socket.id });
@@ -70,6 +71,87 @@ io.on('connection', (socket) => {
       roomData.get(roomId).boxes[boxId].y = y;
     }
     socket.to(roomId).emit('box-moved', { boxId, x, y });
+  });
+
+  // Handle connections
+  socket.on('add-connection', ({ roomId, connection }) => {
+    if (roomData.has(roomId)) {
+      roomData.get(roomId).connections.push(connection);
+    }
+    socket.to(roomId).emit('connection-added', connection);
+  });
+
+  socket.on('box-new-message', ({ roomId, boxId, message, apiKey }) => {
+    if (roomData.has(roomId) && roomData.get(roomId).boxes[boxId]) {
+      const box = roomData.get(roomId).boxes[boxId];
+      if (!box.messages) box.messages = [];
+      box.messages.push(message);
+      
+      // Broadcast user message to others
+      socket.to(roomId).emit('box-message-added', { boxId, message });
+
+      // Call OpenAI API if the message is from user
+      if (message.role === 'user') {
+        if (!apiKey) {
+          const aiMessage = {
+            id: Math.random().toString(36).substr(2, 9),
+            role: 'assistant',
+            content: 'Error: OpenAI API Key not provided.'
+          };
+          roomData.get(roomId).boxes[boxId].messages.push(aiMessage);
+          io.to(roomId).emit('box-message-added', { boxId, message: aiMessage });
+        } else {
+          // Fire API call asynchronously
+          (async () => {
+            try {
+              const messagesHistory = roomData.get(roomId).boxes[boxId].messages.map(m => ({ role: m.role, content: m.content }));
+              const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                  model: 'gpt-3.5-turbo',
+                  messages: messagesHistory
+                })
+              });
+              
+              const data = await response.json();
+              if (roomData.has(roomId) && roomData.get(roomId).boxes[boxId]) {
+                if (data.choices && data.choices.length > 0) {
+                  const aiMessage = {
+                    id: Math.random().toString(36).substr(2, 9),
+                    role: 'assistant',
+                    content: data.choices[0].message.content
+                  };
+                  roomData.get(roomId).boxes[boxId].messages.push(aiMessage);
+                  io.to(roomId).emit('box-message-added', { boxId, message: aiMessage });
+                } else if (data.error) {
+                  const aiMessage = {
+                    id: Math.random().toString(36).substr(2, 9),
+                    role: 'assistant',
+                    content: `Error: ${data.error.message}`
+                  };
+                  roomData.get(roomId).boxes[boxId].messages.push(aiMessage);
+                  io.to(roomId).emit('box-message-added', { boxId, message: aiMessage });
+                }
+              }
+            } catch (err) {
+              if (roomData.has(roomId) && roomData.get(roomId).boxes[boxId]) {
+                const aiMessage = {
+                  id: Math.random().toString(36).substr(2, 9),
+                  role: 'assistant',
+                  content: `Failed to fetch from OpenAI: ${err.message}`
+                };
+                roomData.get(roomId).boxes[boxId].messages.push(aiMessage);
+                io.to(roomId).emit('box-message-added', { boxId, message: aiMessage });
+              }
+            }
+          })();
+        }
+      }
+    }
   });
 
   // Handle disconnection

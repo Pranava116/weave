@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { MousePointer2, LogOut, Square } from 'lucide-react';
+import { MousePointer2, LogOut, Square, Send } from 'lucide-react';
 
 const COLORS = ['#ef4444', '#f97316', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
 
@@ -9,6 +9,10 @@ const Workspace = ({ roomId, onLeave }) => {
   const [socket, setSocket] = useState(null);
   const [cursors, setCursors] = useState({});
   const [boxes, setBoxes] = useState({});
+  const [inputs, setInputs] = useState({});
+  const [apiKeys, setApiKeys] = useState({});
+  const [connections, setConnections] = useState([]);
+  const [drawingConnection, setDrawingConnection] = useState(null);
   const isDrawing = useRef(false);
   const draggingBox = useRef(null);
   const lastPos = useRef({ x: 0, y: 0 });
@@ -57,6 +61,27 @@ const Workspace = ({ roomId, onLeave }) => {
           [boxId]: { ...prev[boxId], x, y }
         };
       });
+    });
+
+    newSocket.on('box-message-added', ({ boxId, message }) => {
+      setBoxes(prev => {
+        if (!prev[boxId]) return prev;
+        const box = prev[boxId];
+        const messages = box.messages ? [...box.messages] : [];
+        messages.push(message);
+        return {
+          ...prev,
+          [boxId]: { ...box, messages }
+        };
+      });
+    });
+
+    newSocket.on('init-connections', (initialConnections) => {
+      if (initialConnections) setConnections(initialConnections);
+    });
+
+    newSocket.on('connection-added', (connection) => {
+      setConnections(prev => [...prev, connection]);
     });
 
     return () => {
@@ -122,9 +147,10 @@ const Workspace = ({ roomId, onLeave }) => {
       id: Math.random().toString(36).substr(2, 9),
       x: 100,
       y: 100,
-      width: 150,
-      height: 100,
-      color: '#4f46e5'
+      width: 320,
+      height: 450,
+      color: '#4f46e5',
+      messages: []
     };
     
     setBoxes(prev => ({ ...prev, [newBox.id]: newBox }));
@@ -140,6 +166,10 @@ const Workspace = ({ roomId, onLeave }) => {
 
     // Throttle emit slightly if needed, but for simple tests sending every move is fine
     socket.emit('mouse-move', { roomId, x, y });
+
+    if (drawingConnection) {
+      setDrawingConnection(prev => prev ? { ...prev, currentX: x, currentY: y } : null);
+    }
 
     if (draggingBox.current) {
       const { id, offsetX, offsetY } = draggingBox.current;
@@ -171,9 +201,62 @@ const Workspace = ({ roomId, onLeave }) => {
     };
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e) => {
     isDrawing.current = false;
     draggingBox.current = null;
+    
+    if (drawingConnection && e && canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      setBoxes(prevBoxes => {
+        const targetBox = Object.values(prevBoxes).find(b => 
+          b.id !== drawingConnection.fromBoxId && 
+          x >= b.x && x <= b.x + b.width &&
+          y >= b.y && y <= b.y + b.height
+        );
+        
+        if (targetBox) {
+          const newConn = {
+            id: Math.random().toString(36).substr(2, 9),
+            fromBoxId: drawingConnection.fromBoxId,
+            toBoxId: targetBox.id
+          };
+          setConnections(prev => [...prev, newConn]);
+          socket.emit('add-connection', { roomId, connection: newConn });
+        }
+        return prevBoxes;
+      });
+    }
+    setDrawingConnection(null);
+  };
+
+  const handleSendMessage = (e, boxId) => {
+    e.preventDefault();
+    const content = inputs[boxId]?.trim();
+    if (!content || !socket) return;
+    
+    const message = {
+      id: Math.random().toString(36).substr(2, 9),
+      role: 'user',
+      content
+    };
+
+    setBoxes(prev => {
+      const box = prev[boxId];
+      const messages = box.messages ? [...box.messages] : [];
+      messages.push(message);
+      return { ...prev, [boxId]: { ...box, messages } };
+    });
+
+    setInputs(prev => ({ ...prev, [boxId]: '' }));
+    const apiKey = apiKeys[boxId];
+    socket.emit('box-new-message', { roomId, boxId, message, apiKey });
+  };
+
+  const handleInputChange = (boxId, val) => {
+    setInputs(prev => ({ ...prev, [boxId]: val }));
   };
 
   const handleBoxPointerDown = (e, boxId) => {
@@ -242,24 +325,144 @@ const Workspace = ({ roomId, onLeave }) => {
           </div>
         ))}
 
+        <svg 
+          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
+        >
+          {connections.map(conn => {
+            const fromBox = boxes[conn.fromBoxId];
+            const toBox = boxes[conn.toBoxId];
+            if (!fromBox || !toBox) return null;
+            
+            const startX = fromBox.x + fromBox.width;
+            const startY = fromBox.y + fromBox.height / 2;
+            const endX = toBox.x;
+            const endY = toBox.y + toBox.height / 2;
+
+            return (
+              <line 
+                key={conn.id}
+                x1={startX} y1={startY} x2={endX} y2={endY}
+                stroke="#94a3b8" strokeWidth="3" markerEnd="url(#arrowhead)"
+              />
+            );
+          })}
+          
+          {drawingConnection && boxes[drawingConnection.fromBoxId] && (
+            <line
+              x1={boxes[drawingConnection.fromBoxId].x + boxes[drawingConnection.fromBoxId].width}
+              y1={boxes[drawingConnection.fromBoxId].y + boxes[drawingConnection.fromBoxId].height / 2}
+              x2={drawingConnection.currentX}
+              y2={drawingConnection.currentY}
+              stroke="#94a3b8" strokeWidth="3" strokeDasharray="5,5" markerEnd="url(#arrowhead)"
+            />
+          )}
+
+          <defs>
+            <marker id="arrowhead" markerWidth="10" markerHeight="7" 
+            refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
+            </marker>
+          </defs>
+        </svg>
+
+        {/* Render connection points outside the boxes */}
+        {Object.values(boxes).map((box) => (
+          <div
+            key={`conn-${box.id}`}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              const rect = canvasRef.current.getBoundingClientRect();
+              setDrawingConnection({
+                fromBoxId: box.id,
+                currentX: e.clientX - rect.left,
+                currentY: e.clientY - rect.top
+              });
+            }}
+            style={{
+              position: 'absolute',
+              left: box.x + box.width - 6,
+              top: box.y + box.height / 2 - 6,
+              width: '12px',
+              height: '12px',
+              backgroundColor: box.color,
+              borderRadius: '50%',
+              cursor: 'crosshair',
+              zIndex: 30,
+              border: '2px solid white',
+              boxShadow: '0 0 4px rgba(0,0,0,0.3)'
+            }}
+          />
+        ))}
+
         {Object.values(boxes).map((box) => (
           <div
             key={box.id}
-            onPointerDown={(e) => handleBoxPointerDown(e, box.id)}
             style={{
               position: 'absolute',
               left: box.x,
               top: box.y,
               width: box.width,
               height: box.height,
-              backgroundColor: box.color,
               borderRadius: '12px',
-              border: '1px solid rgba(255,255,255,0.1)',
+              border: `1px solid ${box.color}`,
               boxShadow: '0 10px 25px -5px rgba(0,0,0,0.5)',
-              cursor: 'grab',
-              zIndex: 20
+              zIndex: 20,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              backgroundColor: 'var(--canvas-bg)'
             }}
-          />
+          >
+            <div 
+              className="box-drag-handle"
+              onPointerDown={(e) => handleBoxPointerDown(e, box.id)}
+              style={{ backgroundColor: box.color }}
+            >
+              <div className="box-drag-handle-indicator" />
+            </div>
+            <div className="chat-container">
+              <div className="chat-messages">
+                {(box.messages || []).map((msg) => (
+                  <div key={msg.id} className={`chat-message ${msg.role}`}>
+                    {msg.content}
+                  </div>
+                ))}
+              </div>
+              {!apiKeys[box.id] ? (
+                <form className="chat-input-area" onSubmit={(e) => {
+                  e.preventDefault();
+                  if (inputs[box.id]?.trim()) {
+                    setApiKeys(prev => ({ ...prev, [box.id]: inputs[box.id].trim() }));
+                    setInputs(prev => ({ ...prev, [box.id]: '' }));
+                  }
+                }}>
+                  <input
+                    type="password"
+                    placeholder="Enter OpenAI API Key..."
+                    value={inputs[box.id] || ''}
+                    onChange={(e) => handleInputChange(box.id, e.target.value)}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  />
+                  <button type="submit" style={{ backgroundColor: box.color, padding: '0.5rem 0.75rem' }}>
+                    <Send size={16} />
+                  </button>
+                </form>
+              ) : (
+                <form className="chat-input-area" onSubmit={(e) => handleSendMessage(e, box.id)}>
+                  <input
+                    type="text"
+                    placeholder="Message ChatGPT..."
+                    value={inputs[box.id] || ''}
+                    onChange={(e) => handleInputChange(box.id, e.target.value)}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  />
+                  <button type="submit" style={{ backgroundColor: box.color, padding: '0.5rem 0.75rem' }}>
+                    <Send size={16} />
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
         ))}
       </div>
     </div>
