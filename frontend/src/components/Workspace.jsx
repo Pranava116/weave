@@ -95,16 +95,16 @@ const Workspace = ({ roomId, onLeave }) => {
     if (canvas) {
       canvas.width = canvas.parentElement.clientWidth;
       canvas.height = canvas.parentElement.clientHeight;
-      
+
       const handleResize = () => {
-        // Keep image data, resize canvas
+        // Keep image data, resiaze canvas
         const ctx = canvas.getContext('2d');
         const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         canvas.width = canvas.parentElement.clientWidth;
         canvas.height = canvas.parentElement.clientHeight;
         ctx.putImageData(imgData, 0, 0);
       };
-      
+
       window.addEventListener('resize', handleResize);
       return () => window.removeEventListener('resize', handleResize);
     }
@@ -123,7 +123,7 @@ const Workspace = ({ roomId, onLeave }) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    
+
     ctx.beginPath();
     ctx.moveTo(x0, y0);
     ctx.lineTo(x1, y1);
@@ -134,7 +134,7 @@ const Workspace = ({ roomId, onLeave }) => {
     ctx.closePath();
 
     if (!emit || !socket) return;
-    
+
     socket.emit('draw', {
       roomId,
       drawData: { x0, y0, x1, y1 }
@@ -145,21 +145,21 @@ const Workspace = ({ roomId, onLeave }) => {
     if (!socket) return;
     const newBox = {
       id: Math.random().toString(36).substr(2, 9),
-      x: 100,
-      y: 100,
+      x: Math.random() * 100,
+      y: Math.random() * 100,
       width: 320,
       height: 450,
       color: '#4f46e5',
       messages: []
     };
-    
+
     setBoxes(prev => ({ ...prev, [newBox.id]: newBox }));
     socket.emit('add-box', { roomId, box: newBox });
   };
 
   const handleMouseMove = (e) => {
     if (!socket || !canvasRef.current) return;
-    
+
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -175,12 +175,12 @@ const Workspace = ({ roomId, onLeave }) => {
       const { id, offsetX, offsetY } = draggingBox.current;
       const newX = x - offsetX;
       const newY = y - offsetY;
-      
+
       setBoxes(prev => ({
         ...prev,
         [id]: { ...prev[id], x: newX, y: newY }
       }));
-      
+
       socket.emit('box-move', { roomId, boxId: id, x: newX, y: newY });
       return;
     }
@@ -188,7 +188,7 @@ const Workspace = ({ roomId, onLeave }) => {
     if (isDrawing.current) {
       drawOnCanvas(lastPos.current.x, lastPos.current.y, x, y, true);
     }
-    
+
     lastPos.current = { x, y };
   };
 
@@ -204,19 +204,19 @@ const Workspace = ({ roomId, onLeave }) => {
   const handleMouseUp = (e) => {
     isDrawing.current = false;
     draggingBox.current = null;
-    
+
     if (drawingConnection && e && canvasRef.current) {
       const rect = canvasRef.current.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      
+
       setBoxes(prevBoxes => {
-        const targetBox = Object.values(prevBoxes).find(b => 
-          b.id !== drawingConnection.fromBoxId && 
+        const targetBox = Object.values(prevBoxes).find(b =>
+          b.id !== drawingConnection.fromBoxId &&
           x >= b.x && x <= b.x + b.width &&
           y >= b.y && y <= b.y + b.height
         );
-        
+
         if (targetBox) {
           const newConn = {
             id: Math.random().toString(36).substr(2, 9),
@@ -236,7 +236,7 @@ const Workspace = ({ roomId, onLeave }) => {
     e.preventDefault();
     const content = inputs[boxId]?.trim();
     if (!content || !socket) return;
-    
+
     const message = {
       id: Math.random().toString(36).substr(2, 9),
       role: 'user',
@@ -263,11 +263,11 @@ const Workspace = ({ roomId, onLeave }) => {
     e.stopPropagation();
     const box = boxes[boxId];
     if (!box || !canvasRef.current) return;
-    
+
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    
+
     draggingBox.current = {
       id: boxId,
       offsetX: x - box.x,
@@ -292,7 +292,7 @@ const Workspace = ({ roomId, onLeave }) => {
           </button>
         </div>
       </header>
-      
+
       <div className="canvas-area"
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -302,21 +302,21 @@ const Workspace = ({ roomId, onLeave }) => {
           ref={canvasRef}
           onMouseDown={handleMouseDown}
         />
-        
+
         {Object.entries(cursors).map(([userId, pos]) => (
-          <div 
-            key={userId} 
+          <div
+            key={userId}
             className="cursor-overlay"
-            style={{ 
+            style={{
               transform: `translate(${pos.x}px, ${pos.y}px)`,
             }}
           >
-            <MousePointer2 
-              size={24} 
-              className="cursor-icon" 
-              style={{ fill: getCursorColor(userId) }} 
+            <MousePointer2
+              size={24}
+              className="cursor-icon"
+              style={{ fill: getCursorColor(userId) }}
             />
-            <div 
+            <div
               className="cursor-name"
               style={{ backgroundColor: getCursorColor(userId) }}
             >
@@ -325,28 +325,28 @@ const Workspace = ({ roomId, onLeave }) => {
           </div>
         ))}
 
-        <svg 
+        <svg
           style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}
         >
           {connections.map(conn => {
             const fromBox = boxes[conn.fromBoxId];
             const toBox = boxes[conn.toBoxId];
             if (!fromBox || !toBox) return null;
-            
+
             const startX = fromBox.x + fromBox.width;
             const startY = fromBox.y + fromBox.height / 2;
             const endX = toBox.x;
             const endY = toBox.y + toBox.height / 2;
 
             return (
-              <line 
+              <line
                 key={conn.id}
                 x1={startX} y1={startY} x2={endX} y2={endY}
                 stroke="#94a3b8" strokeWidth="3" markerEnd="url(#arrowhead)"
               />
             );
           })}
-          
+
           {drawingConnection && boxes[drawingConnection.fromBoxId] && (
             <line
               x1={boxes[drawingConnection.fromBoxId].x + boxes[drawingConnection.fromBoxId].width}
@@ -358,8 +358,8 @@ const Workspace = ({ roomId, onLeave }) => {
           )}
 
           <defs>
-            <marker id="arrowhead" markerWidth="10" markerHeight="7" 
-            refX="9" refY="3.5" orient="auto">
+            <marker id="arrowhead" markerWidth="10" markerHeight="7"
+              refX="9" refY="3.5" orient="auto">
               <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
             </marker>
           </defs>
@@ -413,7 +413,7 @@ const Workspace = ({ roomId, onLeave }) => {
               backgroundColor: 'var(--canvas-bg)'
             }}
           >
-            <div 
+            <div
               className="box-drag-handle"
               onPointerDown={(e) => handleBoxPointerDown(e, box.id)}
               style={{ backgroundColor: box.color }}
